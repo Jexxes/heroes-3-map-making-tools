@@ -3,6 +3,9 @@
 A read/write toolkit for Heroes of Might & Magic III map files (`.h3m`),
 covering parsing, rendering, analysis, balance modelling and editing.
 
+**This is the technical reference.** For installation and day-to-day use, see
+[README.md](README.md).
+
 Python 3.8+, standard library only. `tkinter` is required for the two GUI
 programs and ships with Python on Windows and macOS; on Linux install
 `python3-tk`. Everything else — parser, balance engine, HTML reports, PNG
