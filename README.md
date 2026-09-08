@@ -109,8 +109,10 @@ than markers, since they cover areas.
   outlined
 - **Tab** switches surface / underground
 - **Ctrl + mouse wheel** or `+` / `−` zoom from 1× to 16×
-- **View menu** toggles a grid, a coordinate ruler and a passability overlay
-  (blocked red, interactive yellow)
+- **View menu** toggles a grid, coordinate rulers and a passability overlay
+  (blocked red, interactive yellow). The rulers sit in fixed gutters beside the
+  map, like the official editor's, so the numbers never cover terrain and the
+  spacing widens automatically as you zoom out
 - **Layers** panel toggles each object category
 - **Highlight** box outlines every object whose type or detail matches what you
   type — "dragon", "gold", "Sharpshooter"
@@ -142,8 +144,14 @@ does not grow — are dropdowns holding exactly the values the format allows.
 ### Story text
 
 **Edit ▸ Story text editor…** gives a filterable list of every string in the map
-on one side and an editable box on the other. Text is stored with an explicit
-length, so replacements can be longer or shorter and line breaks are preserved.
+on one side and an editable box on the other. Selecting an entry that belongs
+to an object scrolls the map to it and highlights it, so you can see what a
+sign or a quest actually sits next to while you rewrite it. Map name,
+description, rumors and timed events belong to the map as a whole and are
+labelled as having no position.
+
+Text is stored with an explicit length, so replacements can be longer or
+shorter and line breaks are preserved.
 
 For bulk work such as translation there is a file round trip:
 
@@ -343,6 +351,41 @@ overview, an interactive map, terrain breakdown, balance, players, towns,
 heroes, monsters, artifacts, spells, mines, dwellings, quests, events, signs and
 rumors, keymasters and portals, restrictions, and object counts.
 
+**Charts** are drawn as inline SVG, so they need no library: donuts of terrain
+share per level, objects by kind, wandering monsters by tier, the spread of
+guard strength, dwellings by creature, balance verdicts, typical guard power
+per reward, and a grouped chart of what sits nearest each player — usually the
+quickest way to spot an unfair start.
+
+**Save as PDF.** The report has a print stylesheet, so the browser's own
+Print → Save as PDF produces the same document on paper: the dark theme flips
+to a light one, the scrolling tables print in full with repeating headers, rows
+and charts avoid breaking across pages, and the interactive controls are
+hidden. There is a *Save as PDF* button in the header, or:
+
+```bash
+python3 h3m_report.py MyMap.h3m --pdf report.pdf
+```
+
+which drives an installed Chrome, Chromium or Edge. If none is found it says
+so and points you at the browser route, which gives an identical result. In
+the GUI: **Export ▸ PDF analysis report…**
+
+A full report on a large map runs to about a hundred pages, so `--sections`
+and `--exclude` scope it — `--sections map,overview,terrain,balance,players`
+takes that to 26. `--list-sections` shows the ids. Whatever the balance filter
+is currently showing is what prints, so you can narrow to the stacks you care
+about first.
+
+**Every table sorts** on any column. Numbers sort numerically rather than as
+text, `[x,y,z]` positions sort by coordinate, and cells with no value stay at
+the bottom whichever direction you sort.
+
+**The balance table is interactive.** Two sliders set the ratio window, so you
+can ask to see only the stacks between, say, 0.5x and 5x of the norm, exactly
+as the editor's auto-balance window does. A verdict dropdown and a text search
+narrow it further, and the count updates live.
+
 The map is a real image: the tile grid is encoded as a PNG by hand with `zlib`,
 so nothing needs an image library. Artifacts are listed with their *parent* —
 whether each lies on the map, sits in a named hero's backpack, comes out of an
@@ -444,6 +487,10 @@ roughly halve the file size.
 - Decorative scenery names (object ids ~114–211) are approximate; the `def`
   sprite name in the export is always authoritative. Gameplay object names were
   cross-checked against sprite filenames.
+- Creature dwellings are named by the creature they produce, decoded from the
+  dwelling sprite: 73 of the 80 dwelling subtypes resolve, covering about 95%
+  of the dwellings in the test corpus. The remaining few (upgraded elemental
+  conflux dwellings, mostly) keep their sprite name rather than get a guess.
 - Guard region analysis assumes 8-directional land movement and ignores boats,
   teleporters and subterranean gates, so a pocket reported as sealed may be
   reachable another way.

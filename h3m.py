@@ -172,6 +172,51 @@ OBJECTS = {
     229: "Magic Clouds", 230: "Magic Plains2", 231: "Rocklands",
 }
 
+
+# Creature dwellings (object id 17). The subtype maps one-to-one onto a
+# dwelling sprite, and through it to the creature the dwelling produces.
+# Seven subtypes whose sprite could not be decoded confidently are left out
+# on purpose: they fall back to the sprite name rather than get a guess.
+DWELLING_CREATURE = {
+    0: "Basilisk", 1: "Behemoth", 2: "Beholder", 3: "Black Knight",
+    4: "Bone Dragon", 5: "Cavalier", 6: "Centaur", 7: "Air Elemental",
+    8: "Angel", 9: "Cyclops", 10: "Devil", 11: "Serpent Fly", 12: "Dwarf",
+    13: "Earth Elemental", 14: "Efreeti", 15: "Wood Elf",
+    16: "Fire Elemental", 17: "Stone Gargoyle", 18: "Genie", 19: "Wolf Rider",
+    20: "Gnoll", 21: "Goblin", 22: "Gog", 23: "Gorgon", 24: "Green Dragon",
+    25: "Griffin", 26: "Harpy", 27: "Hell Hound", 28: "Hydra", 29: "Imp",
+    30: "Lizardman", 31: "Mage", 32: "Manticore", 33: "Medusa",
+    34: "Minotaur", 35: "Monk", 36: "Naga", 37: "Demon", 38: "Ogre",
+    39: "Orc", 40: "Pit Fiend", 41: "Red Dragon", 42: "Roc", 43: "Gremlin",
+    44: "Giant", 45: "Dendroid Guard", 46: "Troglodyte",
+    47: "Water Elemental", 48: "Wight", 49: "Wyvern", 50: "Pegasus",
+    51: "Unicorn", 52: "Lich", 53: "Vampire", 54: "Skeleton",
+    55: "Walking Dead", 56: "Pikeman", 57: "Archer", 58: "Swordsman",
+    59: "Pixie", 61: "Firebird", 62: "Azure Dragon", 63: "Crystal Dragon",
+    64: "Faerie Dragon", 65: "Rust Dragon", 66: "Enchanter",
+    67: "Sharpshooter", 73: "Halfling", 74: "Peasant", 75: "Boar",
+    77: "Nomad", 78: "Rogue", 79: "Troll",
+}
+
+# Object id 20 covers the two multi-creature conflux dwellings.
+DWELLING_GROUP = {0: "Elemental Conflux", 1: "Golem Factory"}
+
+
+def dwelling_name(object_id, subid, def_name=""):
+    """Readable name for a creature dwelling, or None if it is not one."""
+    if object_id == 17:
+        who = DWELLING_CREATURE.get(subid)
+        if who:
+            return f"{who} dwelling"
+        sprite = (def_name or "").rsplit("/", 1)[-1]
+        return f"Creature dwelling ({sprite})" if sprite else None
+    if object_id == 20:
+        return DWELLING_GROUP.get(subid, "Creature dwelling")
+    if object_id in (18, 19):
+        return "Creature dwelling (upgraded)"
+    return None
+
+
 MINE_SUBTYPE = {0: "Sawmill (Wood)", 1: "Alchemist's Lab (Mercury)",
                 2: "Ore Pit (Ore)", 3: "Sulfur Dune (Sulfur)",
                 4: "Crystal Cavern (Crystal)", 5: "Gem Pond (Gems)",
@@ -1369,6 +1414,27 @@ def _text_targets(m):
     return out
 
 
+def text_location(m, text_id):
+    """Where a text entry sits on the map, or None if it has no position.
+
+    Map name, description, rumors and timed events belong to the map as a
+    whole; everything else is attached to an object whose index the id
+    carries.
+    """
+    if not text_id or not text_id.startswith("obj"):
+        return None
+    head = text_id.split(".", 1)[0]
+    try:
+        index = int(head[3:])
+    except ValueError:
+        return None
+    if not 0 <= index < len(m["objects"]):
+        return None
+    o = m["objects"][index]
+    return {"index": index, "x": o["x"], "y": o["y"], "z": o["z"],
+            "name": o["name"]}
+
+
 def export_texts(m, path):
     """Write every editable string to a JSON file for editing."""
     doc = {"_map": m["name"], "_note":
@@ -1558,7 +1624,7 @@ def detail_of(o):
     if oid in (33, 219):
         return ", ".join(f"{a['count']}x {a['creature']}" for a in o.get("army", []))
     if oid in (17, 18, 19, 20):
-        return "creature dwelling"
+        return dwelling_name(oid, sub, o.get("def", "")) or "creature dwelling"
     if oid in (216, 217, 218):
         return "random dwelling"
     if oid in (43, 44, 45, 103, 111):

@@ -244,6 +244,7 @@ the index of every later object, so a saved-and-reloaded map renumbers
 | AI Values | 146 | *Tribute to Strategists* (Rainalkar, 2008), AI Values table |
 | Combat stats | 141 | Heroes 3 creature power chart (speed, HP, attack, defence, damage, growth, cost) |
 | Artifact classes | 141 | Same manual, Artifact Merchant price tables |
+| Dwelling creatures | 73 of 80 subtypes | decoded from dwelling sprite names in `h3m.py` |
 
 **Creature stats are matched by name, not by ID.** The power chart's own `ID`
 column does not correspond to h3m creature ids — its Fortress and Conflux
@@ -450,8 +451,30 @@ encoder — so no image library is needed.
 | Terrain (CSV) | One row per tile |
 | Full export (JSON) | Tile-keyed map plus themed indexes |
 | HTML report | 18-section self-contained analysis page |
+| PDF report | the same page printed by a browser |
 | Balance report / CSV | Model tables, warnings, per-stack verdicts |
 | Auto-balance report | Every resize with coordinates and prior ratio |
+
+### PDF
+
+The report is printed by a browser rather than redrawn with a PDF library:
+same HTML, same SVG charts, no extra dependency. A `@media print` block flips
+the palette to a light one — because every colour is a custom property,
+redefining the properties recolours the charts too — removes the fixed table
+heights so tables print in full, repeats table headers on each page with
+`display:table-header-group`, and keeps rows and charts from breaking across
+pages.
+
+`write_pdf()` locates a Chromium-based browser (PATH first, then the usual
+Windows and macOS install paths) and runs it headless with `--print-to-pdf`.
+If none is found it raises `PdfUnavailable` with instructions for the manual
+route, which produces the same document. Nothing about the toolkit's
+zero-dependency position changes: without a browser you lose the automated
+PDF, not the report.
+
+`SECTION_IDS` lists the sections; `sections=` and `exclude=` scope the output,
+which matters mainly for PDFs, where a full report on a 144x144 map runs to
+about 99 pages versus 26 for a scoped one.
 
 ### Full JSON export
 
@@ -528,11 +551,33 @@ corpus of 19 real maps ranging from 36×36 to 144×144, RoE through SoD, 1,075 t
 | Auto-balance including random-quantity | 19/19, 292 changes verified |
 | Creature power vs tier correlation | r = 0.92 |
 | Suggestion calibration (median ratio) | 1.02 |
+| GUI interaction checks under Xvfb | 17/17 |
+| HTML report rendered in headless Chromium | no JS errors; filters, sorting and charts verified |
+| Creature dwellings resolved to a creature | 1,312 of 1,387 (94.6%) |
 
-The GUIs are tested headlessly with a stubbed `tkinter`, which exercises the
-export paths and edit logic but not the window layout. Anything involving
-actual widget rendering — the map canvas, the dialogs, the highlight — has been
-verified only by inspection and needs a human to confirm.
+The GUIs are exercised under a virtual display (`Xvfb`) with a real `tkinter`,
+covering hover, click-to-pin, the selection outline, the edit panel, the grid,
+the ruler gutters (shown, drawn, scroll-synced, non-colliding, hidden again),
+the passability overlay, zoom, balance analysis, guard region highlighting and
+the story text editor — 17 checks, all passing.
+
+The HTML report is loaded in headless Chromium and asserted to raise no
+JavaScript errors, render its charts, and filter correctly: narrowing the
+ratio window to 1.0x–2.0x cuts 482 stacks to 113, the verdict dropdown to 48,
+and a text search for "dragon" to 14. Menu structure
+is asserted separately: the editor exposes File, Export, View, Edit, Balance,
+Help; the viewer the same without Edit.
+
+Two layout properties are asserted numerically rather than by eye, because
+both were real bugs:
+
+- the map canvas expands to the full available width, and its width does not
+  change when a long path is written to the status bar;
+- the scroll region is padded symmetrically when the map is smaller than the
+  canvas, so the map sits centred.
+
+Visual appearance beyond these assertions is still a matter of judgement and
+benefits from a human look.
 
 Design decisions were checked against data rather than asserted: the distance
 hypothesis was tested and dropped, learned creature power was tested and

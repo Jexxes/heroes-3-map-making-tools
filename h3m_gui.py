@@ -35,6 +35,9 @@ import h3m_balance as balance
 import h3m_report as report
 import h3m_army as army
 
+RULER_W, RULER_H = 34, 18      # ruler gutter thickness
+RULER_MIN_GAP = 26             # least pixels between ruler labels
+
 BALANCE_COLORS = {
     "much too weak": "#3b6bff", "weak": "#4bc0ff", "on curve": "#3fd07a",
     "strong": "#ffa62b", "much too strong": "#ff3b30",
@@ -121,6 +124,7 @@ class MapViewer(tk.Tk):
         ex.add_command(label="Summary → text file…", command=lambda: self.export("summary"))
         ex.add_separator()
         ex.add_command(label="HTML analysis report…", command=self.export_html)
+        ex.add_command(label="PDF analysis report…", command=self.export_pdf)
         ex.add_command(label="Export everything to a folder…", command=self.export_all)
         bar.add_cascade(label="Export", menu=ex)
 
@@ -177,8 +181,6 @@ class MapViewer(tk.Tk):
                        command=self.import_texts_file)
         bar.add_cascade(label="Edit", menu=em)
 
-        bar.add_cascade(label="Edit", menu=em)
-
     def _build_balance_menu(self, bar):
         bm = tk.Menu(bar, tearoff=0)
         bm.add_command(label="Load reference maps…", command=self.load_reference)
@@ -221,9 +223,24 @@ class MapViewer(tk.Tk):
         self.search.pack(side="left", padx=4, ipady=3)
         self.search.bind("<KeyRelease>", self.on_search)
 
+        # width=1 with fill/expand, for the same reason as the status bar: a
+        # long map name must not enlarge the window's requested width.
         self.meta_lbl = tk.Label(top, text="No map loaded", bg=PANEL, fg=ACCENT,
-                                 font=UI, anchor="e")
-        self.meta_lbl.pack(side="right")
+                                 font=UI, anchor="e", width=1)
+        self.meta_lbl.pack(side="right", fill="x", expand=True)
+
+        # ---- status bar ----
+        # Packed before the map and the side panel so that it spans the whole
+        # window. A widget packed with side="left" claims a full-height strip,
+        # so anything packed after it is confined to the cavity beside it.
+        #
+        # width=1 keeps the label's own text out of the geometry calculation.
+        # Without it a long file path makes the window's requested width
+        # enormous, pack has no leftover space to hand out, and the map canvas
+        # never expands past its natural size.
+        self.status = tk.Label(self, text="Ready", bg="#15151a", fg="#9a9aa5",
+                               anchor="w", font=UI, padx=10, pady=4, width=1)
+        self.status.pack(side="bottom", fill="x")
 
         # ---- right panel ----
         right = tk.Frame(self, bg=PANEL, width=360)
@@ -271,27 +288,41 @@ class MapViewer(tk.Tk):
         self.layers = tk.Frame(right, bg=PANEL)
         self.layers.pack(fill="x", padx=10, pady=(0, 10))
 
-        # ---- canvas ----
-        wrap = tk.Frame(self, bg=BG)
-        wrap.pack(side="left", fill="both", expand=True)
-        self.canvas = tk.Canvas(wrap, bg=BG, highlightthickness=0)
-        hbar = tk.Scrollbar(wrap, orient="horizontal", command=self.canvas.xview)
-        vbar = tk.Scrollbar(wrap, orient="vertical", command=self.canvas.yview)
-        self.canvas.config(xscrollcommand=hbar.set, yscrollcommand=vbar.set)
-        vbar.pack(side="right", fill="y")
-        hbar.pack(side="bottom", fill="x")
-        self.canvas.pack(side="left", fill="both", expand=True)
+        # ---- canvas, with ruler gutters ----
+        # The rulers are separate canvases in a grid rather than text drawn on
+        # the map, so the numbers stay put while the map scrolls under them and
+        # never sit on top of terrain.
+        self.wrap = tk.Frame(self, bg=BG)
+        self.wrap.pack(side="left", fill="both", expand=True)
+        self.wrap.grid_rowconfigure(1, weight=1)
+        self.wrap.grid_columnconfigure(1, weight=1)
 
+        self.ruler_corner = tk.Frame(self.wrap, bg=PANEL,
+                                     width=RULER_W, height=RULER_H)
+        self.ruler_top = tk.Canvas(self.wrap, bg=PANEL, height=RULER_H,
+                                   highlightthickness=0)
+        self.ruler_left = tk.Canvas(self.wrap, bg=PANEL, width=RULER_W,
+                                    highlightthickness=0)
+        self.canvas = tk.Canvas(self.wrap, bg=BG, highlightthickness=0)
+        hbar = tk.Scrollbar(self.wrap, orient="horizontal",
+                            command=self.canvas.xview)
+        vbar = tk.Scrollbar(self.wrap, orient="vertical",
+                            command=self.canvas.yview)
+        self.canvas.config(xscrollcommand=self._on_xscroll,
+                           yscrollcommand=self._on_yscroll)
+        self.hbar, self.vbar = hbar, vbar
+
+        self.canvas.grid(row=1, column=1, sticky="nsew")
+        vbar.grid(row=1, column=2, sticky="ns")
+        hbar.grid(row=2, column=1, sticky="ew")
+        self.place_rulers()
+
+        self.canvas.bind("<Configure>", self.on_canvas_resize)
         self.canvas.bind("<Motion>", self.on_motion)
         self.canvas.bind("<Button-1>", self.on_click)
         self.canvas.bind("<MouseWheel>", self.on_wheel)          # win / mac
         self.canvas.bind("<Button-4>", lambda e: self.on_wheel(e, 1))   # linux
         self.canvas.bind("<Button-5>", lambda e: self.on_wheel(e, -1))
-
-        # ---- status bar ----
-        self.status = tk.Label(self, text="Ready", bg="#15151a", fg="#9a9aa5",
-                               anchor="w", font=UI, padx=10, pady=4)
-        self.status.pack(side="bottom", fill="x")
 
     def _show_placeholder(self):
         self.canvas.delete("all")
@@ -397,7 +428,8 @@ class MapViewer(tk.Tk):
 
         self.canvas.delete("all")
         self.canvas.create_image(0, 0, image=self.scaled, anchor="nw")
-        self.canvas.config(scrollregion=(0, 0, size, size))
+        self.map_px = size
+        self.fit_view()
         self.draw_markers()
         self.draw_overlays()
 
@@ -429,15 +461,32 @@ class MapViewer(tk.Tk):
         if z is not None and z != self.level and self.map["has_underground"]:
             self.level = z
             self.render()
-        zf = ZOOMS[self.zoom_i]
-        size = self.map["size"] * zf
-        self.canvas.xview_moveto(max(0.0, (x * zf - self.canvas.winfo_width() / 2) / size))
-        self.canvas.yview_moveto(max(0.0, (y * zf - self.canvas.winfo_height() / 2) / size))
+        self.scroll_to(x, y)
         self.pinned = True
         self.show_tile(x, y)
         self.select_tile(x, y)
         if not self.READ_ONLY:
             self.build_editor(x, y)
+
+    def scroll_to(self, x, y):
+        """Bring a tile into the middle of the view.
+
+        Fractions are taken against the padded scroll region rather than the
+        map itself, since fit_view() adds a margin when the map is smaller
+        than the canvas.
+        """
+        self.canvas.update_idletasks()
+        region = self.canvas.cget("scrollregion")
+        if not region:
+            return
+        x0, y0, x1, y1 = (float(v) for v in region.split())
+        width, height = (x1 - x0) or 1, (y1 - y0) or 1
+        zf = ZOOMS[self.zoom_i]
+        cw, ch = self.canvas.winfo_width(), self.canvas.winfo_height()
+        fx = (x * zf - x0 - cw / 2) / width
+        fy = (y * zf - y0 - ch / 2) / height
+        self.canvas.xview_moveto(min(max(fx, 0.0), 1.0))
+        self.canvas.yview_moveto(min(max(fy, 0.0), 1.0))
 
     def analyse_guard(self, x, y):
         """If a wandering monster is selected, work out what it seals off."""
@@ -524,13 +573,101 @@ class MapViewer(tk.Tk):
                                            tags="marker")
         self.draw_selection()
 
+    def fit_view(self):
+        """Centre the map when it is smaller than the canvas.
+
+        The map is always drawn from (0, 0), so a map narrower than the widget
+        would otherwise sit against the left edge with bare canvas beside it.
+        Padding the scroll region instead of moving the image keeps every
+        drawing routine and the hover lookup in plain map coordinates, since
+        canvasx/canvasy already account for the scroll offset.
+        """
+        px = getattr(self, "map_px", 0)
+        if not px:
+            return
+        self.canvas.update_idletasks()
+        cw = self.canvas.winfo_width()
+        ch = self.canvas.winfo_height()
+        padx = max(0, (cw - px) // 2)
+        pady = max(0, (ch - px) // 2)
+        self.canvas.config(scrollregion=(-padx, -pady, px + padx, px + pady))
+        self.draw_rulers()
+
+    def on_canvas_resize(self, _event=None):
+        self.fit_view()
+
+    # ------------------------------------------------------------------
+    # rulers
+    # ------------------------------------------------------------------
+    def place_rulers(self):
+        """Show or hide the ruler gutters without disturbing the map."""
+        if self.show_coords:
+            self.ruler_corner.grid(row=0, column=0, sticky="nsew")
+            self.ruler_top.grid(row=0, column=1, sticky="ew")
+            self.ruler_left.grid(row=1, column=0, sticky="ns")
+        else:
+            self.ruler_corner.grid_remove()
+            self.ruler_top.grid_remove()
+            self.ruler_left.grid_remove()
+
+    def _on_xscroll(self, first, last):
+        self.hbar.set(first, last)
+        if self.show_coords:
+            self.ruler_top.xview_moveto(first)
+
+    def _on_yscroll(self, first, last):
+        self.vbar.set(first, last)
+        if self.show_coords:
+            self.ruler_left.yview_moveto(first)
+
+    def ruler_step(self, z):
+        """Tile interval between labels, so they never run together."""
+        for step in (1, 2, 5, 10, 20, 25, 50):
+            if step * z >= RULER_MIN_GAP:
+                return step
+        return 100
+
+    def draw_rulers(self):
+        self.ruler_top.delete("all")
+        self.ruler_left.delete("all")
+        if not self.map or not self.show_coords:
+            return
+        z = ZOOMS[self.zoom_i]
+        size = self.map["size"]
+        region = self.canvas.cget("scrollregion")
+        if not region:
+            return
+        x0, y0, x1, y1 = (float(v) for v in region.split())
+        self.ruler_top.config(scrollregion=(x0, 0, x1, RULER_H))
+        self.ruler_left.config(scrollregion=(0, y0, RULER_W, y1))
+
+        step = self.ruler_step(z)
+        font = ("Helvetica", 8)
+        for i in range(0, size, step):
+            cx = i * z + z / 2
+            self.ruler_top.create_text(cx, RULER_H / 2, text=str(i),
+                                       fill="#cdd3e4", font=font)
+            self.ruler_top.create_line(i * z, RULER_H - 3, i * z, RULER_H,
+                                       fill="#5a6076")
+            cy = i * z + z / 2
+            self.ruler_left.create_text(RULER_W / 2, cy, text=str(i),
+                                        fill="#cdd3e4", font=font)
+            self.ruler_left.create_line(RULER_W - 3, i * z, RULER_W, i * z,
+                                        fill="#5a6076")
+        # keep the gutters aligned with wherever the map is scrolled to
+        self.ruler_top.xview_moveto(self.canvas.xview()[0])
+        self.ruler_left.yview_moveto(self.canvas.yview()[0])
+
     def toggle_grid(self):
         self.show_grid = self.var_grid.get()
         self.draw_overlays()
 
     def toggle_coords(self):
         self.show_coords = self.var_coords.get()
-        self.draw_overlays()
+        self.place_rulers()
+        self.update_idletasks()
+        self.fit_view()
+        self.draw_rulers()
 
     def toggle_pass(self):
         self.show_pass = self.var_pass.get()
@@ -538,7 +675,7 @@ class MapViewer(tk.Tk):
         self.render()
 
     def draw_overlays(self):
-        """Grid lines and the coordinate ruler, drawn over the map."""
+        """Grid lines over the map, plus the ruler gutters beside it."""
         self.canvas.delete("grid")
         if not self.map:
             return
@@ -554,15 +691,7 @@ class MapViewer(tk.Tk):
                                         tags="grid")
                 self.canvas.create_line(0, i * z, px, i * z, fill=col,
                                         tags="grid")
-        if self.show_coords:
-            step = 1 if z >= 14 else (2 if z >= 8 else (5 if z >= 4 else 10))
-            for i in range(0, size, step):
-                for (tx, ty, anchor) in ((i * z + z / 2, 6, "n"),
-                                         (6, i * z + z / 2, "w")):
-                    self.canvas.create_text(
-                        tx, ty, text=str(i), fill="#cdd3e4",
-                        font=("Helvetica", max(7, min(11, z))), anchor=anchor,
-                        tags="grid")
+        self.draw_rulers()
 
     def zoom(self, delta):
         if not self.map:
@@ -1082,6 +1211,16 @@ class MapViewer(tk.Tk):
         count.pack(side="left", padx=10)
         preview()
 
+    @staticmethod
+    def short_path(path, keep=2):
+        """Trim a long path to its last few parts.
+
+        The status bar clips at its right edge, so a full path would hide the
+        filename, which is the part worth reading.
+        """
+        parts = str(path).replace("\\", "/").split("/")
+        return path if len(parts) <= keep else ".../" + "/".join(parts[-keep:])
+
     def report_pending(self, extra=""):
         n = len(h3m.pending_edits(self.map)) if self.map else 0
         bits = [f"{n} pending edit(s)"] if n else ["no pending edits"]
@@ -1124,7 +1263,8 @@ class MapViewer(tk.Tk):
             "Saved",
             f"Wrote {os.path.basename(out)} with {n} change(s).\n\n"
             "The map was re-parsed before writing and read back cleanly.")
-        self.status.config(text=f"Saved {out} ({n} change(s) applied)")
+        self.status.config(
+            text=f"Saved {self.short_path(out)} ({n} change(s) applied)")
 
     def text_editor(self):
         """Edit every string in the map without leaving the program."""
@@ -1192,9 +1332,17 @@ class MapViewer(tk.Tk):
             commit()
             tid, w, target, key = state["rows"][sel[0]]
             state["current"] = (tid, w, target, key)
-            where.config(text=w)
+            loc = h3m.text_location(self.map, tid)
+            if loc:
+                where.config(text=f"{w}\n(highlighted on the map)")
+                self.goto_tile(loc["x"], loc["y"], loc["z"])
+                win.lift()
+            else:
+                where.config(text=f"{w}\n(belongs to the map, not a place "
+                                  f"on it)")
             txt.delete("1.0", "end")
             txt.insert("1.0", target.get(key) or "")
+            txt.focus_set()
         lb.bind("<<ListboxSelect>>", load)
 
         def commit():
@@ -1232,7 +1380,8 @@ class MapViewer(tk.Tk):
             return
         h3m.export_texts(self.map, out)
         self.status.config(
-            text=f"Wrote {out} — edit the 'text' values, then Edit > Import")
+            text=f"Wrote {self.short_path(out)} — edit the 'text' values, "
+                 f"then Edit > Import")
 
     def import_texts_file(self):
         if not self.map:
@@ -1327,7 +1476,7 @@ class MapViewer(tk.Tk):
             traceback.print_exc()
             messagebox.showerror("Export failed", str(e))
             return
-        self.status.config(text=f"Wrote {out} "
+        self.status.config(text=f"Wrote {self.short_path(out)} "
                                 f"({os.path.getsize(out) / 1000:.0f} KB)")
 
     def _write(self, kind, out):
@@ -1388,9 +1537,49 @@ class MapViewer(tk.Tk):
             traceback.print_exc()
             messagebox.showerror("Report failed", str(e))
             return
-        self.status.config(text=f"Wrote {out} "
+        self.status.config(text=f"Wrote {self.short_path(out)} "
                                 f"({os.path.getsize(out)/1e6:.1f} MB)")
         if messagebox.askyesno("Report ready", "Open it in your browser?"):
+            import webbrowser
+            webbrowser.open("file://" + os.path.abspath(out))
+
+    def export_pdf(self):
+        """Print the HTML report to PDF with an installed browser."""
+        if not self.map:
+            messagebox.showinfo("No map", "Open a map first.")
+            return
+        if not report.find_browser():
+            if not messagebox.askyesno(
+                    "No browser found",
+                    "No Chrome, Chromium or Edge was found to print with.\n\n"
+                    "You can still get the same PDF by saving the HTML report "
+                    "and using your browser's Print \u2192 Save as PDF.\n\n"
+                    "Save the HTML report instead?"):
+                return
+            self.export_html()
+            return
+        out = filedialog.asksaveasfilename(
+            initialfile=f"{self._stem()}_report.pdf", defaultextension=".pdf",
+            filetypes=[("PDF", "*.pdf")])
+        if not out:
+            return
+        self.status.config(text="Rendering PDF, this takes a few seconds …")
+        self.update_idletasks()
+        try:
+            report.build_pdf(self.map, self.path or "", out,
+                             suggestions=getattr(self, "_last_suggestions",
+                                                 None))
+        except report.PdfUnavailable as e:
+            messagebox.showerror("Could not make the PDF", str(e))
+            self.status.config(text="PDF failed")
+            return
+        except Exception as e:
+            traceback.print_exc()
+            messagebox.showerror("PDF failed", str(e))
+            return
+        self.status.config(text=f"Wrote {self.short_path(out)} "
+                                f"({os.path.getsize(out) / 1e6:.1f} MB)")
+        if messagebox.askyesno("PDF ready", "Open it?"):
             import webbrowser
             webbrowser.open("file://" + os.path.abspath(out))
 
@@ -1419,7 +1608,8 @@ class MapViewer(tk.Tk):
                 traceback.print_exc()
                 messagebox.showerror("Export failed", f"{name}: {e}")
                 return
-        self.status.config(text=f"Wrote {len(written)} files to {folder}")
+        self.status.config(
+            text=f"Wrote {len(written)} files to {self.short_path(folder)}")
         messagebox.showinfo("Export complete",
                             "Wrote:\n\n" + "\n".join(written))
 
@@ -1506,7 +1696,7 @@ class MapViewer(tk.Tk):
                                    extrasaction="ignore")
                 w.writeheader()
                 w.writerows(self._last_suggestions)
-        self.status.config(text=f"Wrote {out}")
+        self.status.config(text=f"Wrote {self.short_path(out)}")
 
     def about(self):
         messagebox.showinfo(

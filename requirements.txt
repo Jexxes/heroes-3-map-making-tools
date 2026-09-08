@@ -1,0 +1,35 @@
+# HoMM3 Map Toolkit — Python package requirements
+#
+# There are none. This file is intentionally free of packages.
+#
+# Every module imports only from the Python standard library:
+#
+#   argparse  base64  binascii  collections  csv     gzip
+#   html      json    math      os           statistics
+#   struct    sys     tempfile  tkinter      traceback
+#   webbrowser  zlib
+#
+# `pip install -r requirements.txt` therefore succeeds and installs nothing,
+# which is the correct outcome. The file exists so that tooling which expects
+# it does not fail, and so the zero-dependency position is stated explicitly
+# rather than left to be inferred.
+#
+# ---------------------------------------------------------------------------
+# What you actually need
+# ---------------------------------------------------------------------------
+#
+#   1. Python 3.8 or newer.
+#
+#   2. tkinter, for the two GUI programs only. It is part of the standard
+#      library but some Linux distributions ship it as a separate OS package:
+#
+#        Debian / Ubuntu   sudo apt install python3-tk
+#        Fedora / RHEL     sudo dnf install python3-tkinter
+#        Arch              sudo pacman -S tk
+#        openSUSE          sudo zypper install python3-tk
+#        macOS / Windows   already included with python.org installers
+#
+#      The command-line tools and the library API do not need tkinter.
+#
+# Run `python3 setup_check.py` to verify all of the above and report anything
+# missing. It installs nothing and changes nothing.
